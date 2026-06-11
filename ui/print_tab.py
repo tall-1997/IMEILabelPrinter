@@ -1,16 +1,18 @@
 """
 打印录入页面 UI 组件
 支持自由选择 BarTender 模板和 Excel 校验文件
+自动保存配置到本地文件
 """
 
 import os
 import re
+import json
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, 
     QLabel, QLineEdit, QSpinBox, QPushButton, QComboBox,
     QMessageBox, QGroupBox, QTextEdit, QFileDialog,
     QDialog, QDialogButtonBox, QTableWidget, QTableWidgetItem,
-    QHeaderView, QFrame
+    QHeaderView, QFrame, QCheckBox
 )
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont
@@ -21,18 +23,59 @@ class PrintTab(QWidget):
     
     print_success = pyqtSignal(str)
     
-    def __init__(self, record_manager, default_template_path: str):
+    def __init__(self, record_manager, default_template_path: str, default_excel_path: str = ""):
         super().__init__()
         
         self.record_manager = record_manager
-        self.template_path = default_template_path
+        self.config_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json")
+        self.user_config = self.load_user_config()
+        
+        # 使用用户保存的路径，如果没有则使用默认路径
+        self.template_path = self.user_config.get("template_path", default_template_path)
+        self.validation_excel_path = self.user_config.get("excel_path", default_excel_path)
         self.bartender = None
         self.data_sources = []
-        self.validation_excel_path = ""
         self.validation_data = set()
+        self.auto_skip_duplicate = self.user_config.get("auto_skip_duplicate", False)
         
         self.init_ui()
         self.load_template()
+        if self.validation_excel_path:
+            self.load_excel_data(silent=True)
+    
+    def load_user_config(self):
+        """加载用户配置"""
+        config = {
+            "template_path": "",
+            "excel_path": "",
+            "auto_skip_duplicate": False
+        }
+        
+        if os.path.exists(self.config_file):
+            try:
+                with open(self.config_file, 'r', encoding='utf-8') as f:
+                    saved_config = json.load(f)
+                    config.update(saved_config)
+            except Exception as e:
+                print(f"加载配置文件失败：{e}")
+        
+        return config
+    
+    def save_user_config(self):
+        """保存用户配置"""
+        config = {
+            "template_path": self.template_path,
+            "excel_path": self.validation_excel_path,
+            "auto_skip_duplicate": self.auto_skip_duplicate
+        }
+        
+        try:
+            with open(self.config_file, 'w', encoding='utf-8') as f:
+                json.dump(config, f, ensure_ascii=False, indent=2)
+            return True
+        except Exception as e:
+            print(f"保存配置文件失败：{e}")
+            return False
     
     def init_ui(self):
         """初始化 UI"""
@@ -135,7 +178,22 @@ class PrintTab(QWidget):
         button_layout.addWidget(self.preview_btn)
         
         # =====================================================
-        # 5. 状态显示区域
+        # 5. 高级选项
+        # =====================================================
+        advanced_group = QGroupBox("高级选项")
+        advanced_layout = QHBoxLayout()
+        
+        self.skip_duplicate_check = QCheckBox("自动跳过重复打印的 IMEI（不弹窗提示）")
+        self.skip_duplicate_check.setChecked(self.auto_skip_duplicate)
+        self.skip_duplicate_check.stateChanged.connect(self.on_skip_duplicate_changed)
+        
+        advanced_layout.addWidget(self.skip_duplicate_check)
+        advanced_layout.addStretch()
+        
+        advanced_group.setLayout(advanced_layout)
+        
+        # =====================================================
+        # 6. 状态显示区域
         # =====================================================
         status_group = QGroupBox("打印状态")
         status_layout = QVBoxLayout()
@@ -158,21 +216,42 @@ class PrintTab(QWidget):
         main_layout.addWidget(excel_group)
         main_layout.addWidget(line)
         main_layout.addLayout(button_layout)
+        main_layout.addWidget(advanced_group)
         main_layout.addWidget(status_group)
     
-    def load_template(self):
+    def load_template(self, silent=False):
         """加载模板文件"""
-        if not self.template_path or not os.path.exists(self.template_path):
+        if not self.template_path:
             self.template_status.setText("未选择")
             self.template_status.setStyleSheet("color: #f44336; font-weight: bold;")
-            self.log_message("模板未加载")
-            return
+            if not silent:
+                self.log_message("模板未加载")
+            return False
+        
+        if not os.path.exists(self.template_path):
+            self.template_status.setText("文件不存在")
+            self.template_status.setStyleSheet("color: #f44336; font-weight: bold;")
+            error_msg = (
+                f"模板文件不存在或无法访问！\n\n"
+                f"文件路径：{self.template_path}\n\n"
+                f"可能原因：\n"
+                f"1. 文件已被移动或删除\n"
+                f"2. 路径中有中文字符或特殊字符\n"
+                f"3. 没有访问该文件的权限\n"
+                f"4. 网络驱动器未连接\n\n"
+                f"请点击「选择模板」重新选择文件。"
+            )
+            if not silent:
+                QMessageBox.critical(self, "模板加载失败", error_msg)
+            self.log_message(f"模板文件不存在：{self.template_path}")
+            return False
         
         try:
             from core.bartender import BarTenderPrinter
             
-            self.template_status.setText("加载中...")
-            self.template_status.setStyleSheet("color: #2196F3; font-weight: bold;")
+            if not silent:
+                self.template_status.setText("加载中...")
+                self.template_status.setStyleSheet("color: #2196F3; font-weight: bold;")
             
             self.bartender = BarTenderPrinter(self.template_path)
             success, result = self.bartender.load_template()
@@ -181,26 +260,59 @@ class PrintTab(QWidget):
                 success, data_sources = self.bartender.get_data_sources()
                 if success and data_sources:
                     self.data_sources = data_sources
-                    self.template_status.setText(f"已加载 {len(data_sources)} 个数据源")
-                    self.template_status.setStyleSheet("color: #4CAF50; font-weight: bold;")
-                    self.log_message(f"模板加载成功：{os.path.basename(self.template_path)}")
-                    self.check_ready_status()
+                    if not silent:
+                        self.template_status.setText(f"已加载 {len(data_sources)} 个数据源")
+                        self.template_status.setStyleSheet("color: #4CAF50; font-weight: bold;")
+                        self.log_message(f"模板加载成功：{os.path.basename(self.template_path)}")
                 else:
-                    self.template_status.setText("未找到数据源")
-                    self.template_status.setStyleSheet("color: #FF9800; font-weight: bold;")
-                    self.log_message("未找到数据源，使用默认配置")
-                    self.check_ready_status()
+                    if not silent:
+                        self.template_status.setText("未找到数据源")
+                        self.template_status.setStyleSheet("color: #FF9800; font-weight: bold;")
+                        self.log_message("未找到数据源，使用默认配置")
+                self.check_ready_status()
+                return True
             else:
                 self.template_status.setText("加载失败")
                 self.template_status.setStyleSheet("color: #f44336; font-weight: bold;")
+                error_msg = (
+                    f"无法加载 BarTender 模板！\n\n"
+                    f"模板文件：{self.template_path}\n\n"
+                    f"错误信息：{result}\n\n"
+                    f"可能原因：\n"
+                    f"1. BarTender 未安装或未正确激活\n"
+                    f"2. 模板文件损坏或格式错误\n"
+                    f"3. BarTender 版本不兼容\n"
+                    f"4. COM 组件初始化失败\n\n"
+                    f"请检查：\n"
+                    f"- BarTender 2021 是否已安装并激活\n"
+                    f"- 模板文件是否可以正常打开\n"
+                    f"- 尝试在 BarTender 中打开此模板"
+                )
+                if not silent:
+                    QMessageBox.critical(self, "模板加载失败", error_msg)
                 self.log_message(f"模板加载失败：{result}")
-                QMessageBox.warning(self, "模板加载失败", f"无法加载 BarTender 模板:\n{result}")
+                return False
                 
         except Exception as e:
             self.template_status.setText("加载失败")
             self.template_status.setStyleSheet("color: #f44336; font-weight: bold;")
+            error_msg = (
+                f"加载模板时发生错误！\n\n"
+                f"模板文件：{self.template_path}\n\n"
+                f"错误详情：{str(e)}\n\n"
+                f"可能原因：\n"
+                f"1. BarTender 服务未启动\n"
+                f"2. 系统权限问题\n"
+                f"3. 内存不足\n\n"
+                f"请尝试：\n"
+                f"- 重启 BarTender 软件\n"
+                f"- 以管理员身份运行本程序\n"
+                f"- 重新启动电脑"
+            )
+            if not silent:
+                QMessageBox.critical(self, "错误", error_msg)
             self.log_message(f"初始化失败：{str(e)}")
-            QMessageBox.critical(self, "错误", f"加载模板时发生错误:\n{str(e)}")
+            return False
     
     def check_ready_status(self):
         """检查是否可以打印"""
@@ -220,19 +332,6 @@ class PrintTab(QWidget):
             self.print_btn.setEnabled(False)
             self.preview_btn.setEnabled(False)
     
-    def validate_imei(self, imei: str) -> bool:
-        """验证 IMEI 格式"""
-        if not imei:
-            return False
-        # 支持 15 位数字，可选带空格或横杠
-        clean_imei = imei.strip().replace("-", "").replace(" ", "")
-        pattern = r'^\d{15}$'
-        return bool(re.match(pattern, clean_imei))
-    
-    def clean_imei(self, imei: str) -> str:
-        """清理 IMEI 格式"""
-        return imei.strip().replace("-", "").replace(" ", "")
-    
     def log_message(self, message: str):
         """记录日志"""
         from datetime import datetime
@@ -247,6 +346,11 @@ class PrintTab(QWidget):
         else:
             self.status_label.setStyleSheet("color: #f44336; font-weight: bold;")
     
+    def on_skip_duplicate_changed(self, state):
+        """跳过重复打印选项改变"""
+        self.auto_skip_duplicate = (state == Qt.Checked)
+        self.save_user_config()
+    
     def on_select_template_clicked(self):
         """选择 BarTender 模板文件"""
         file_path, _ = QFileDialog.getOpenFileName(
@@ -259,12 +363,16 @@ class PrintTab(QWidget):
         if file_path:
             self.template_path = file_path
             self.template_path_label.setText(os.path.basename(file_path))
+            self.template_path_label.setToolTip(file_path)
             self.template_path_label.setStyleSheet("color: #2196F3; font-weight: bold;")
             self.template_status.setText("待加载")
             self.template_status.setStyleSheet("color: #2196F3; font-weight: bold;")
             self.data_sources = []
             self.log_message(f"已选择模板：{file_path}")
-            self.load_template()
+            self.save_user_config()
+            
+            if self.load_template():
+                self.log_message("模板加载成功，配置已保存")
     
     def on_select_excel_clicked(self):
         """选择 Excel 文件"""
@@ -278,6 +386,7 @@ class PrintTab(QWidget):
         if file_path:
             self.validation_excel_path = file_path
             self.excel_path_label.setText(os.path.basename(file_path))
+            self.excel_path_label.setToolTip(file_path)
             self.excel_path_label.setStyleSheet("color: #2196F3; font-weight: bold;")
             self.load_excel_btn.setEnabled(True)
             self.validation_data.clear()
@@ -287,17 +396,40 @@ class PrintTab(QWidget):
             self.preview_btn.setEnabled(False)
             self.update_status("已选择 Excel 文件，请点击加载数据", True)
             self.log_message(f"已选择校验文件：{file_path}")
+            self.save_user_config()
     
     def on_load_excel_clicked(self):
         """加载 Excel 数据"""
+        self.load_excel_data(silent=False)
+    
+    def load_excel_data(self, silent=False):
+        """加载 Excel 数据的内部方法"""
         if not self.validation_excel_path:
-            QMessageBox.warning(self, "错误", "请先选择 Excel 文件")
-            return
+            if not silent:
+                QMessageBox.warning(self, "错误", "请先选择 Excel 文件")
+            return False
+        
+        if not os.path.exists(self.validation_excel_path):
+            error_msg = (
+                f"Excel 文件不存在或无法访问！\n\n"
+                f"文件路径：{self.validation_excel_path}\n\n"
+                f"可能原因：\n"
+                f"1. 文件已被移动或删除\n"
+                f"2. 文件正在被其他程序占用\n"
+                f"3. 没有访问该文件的权限\n"
+                f"4. 网络驱动器未连接\n\n"
+                f"请点击「选择 Excel」重新选择文件。"
+            )
+            if not silent:
+                QMessageBox.critical(self, "文件错误", error_msg)
+            self.log_message(f"Excel 文件不存在：{self.validation_excel_path}")
+            return False
         
         try:
-            self.validation_status.setText("加载中...")
-            self.validation_status.setStyleSheet("color: #2196F3; font-weight: bold;")
-            self.update_status("正在加载 Excel 数据...", True)
+            if not silent:
+                self.validation_status.setText("加载中...")
+                self.validation_status.setStyleSheet("color: #2196F3; font-weight: bold;")
+                self.update_status("正在加载 Excel 数据...", True)
             
             from openpyxl import load_workbook
             wb = load_workbook(self.validation_excel_path, read_only=True)
@@ -310,41 +442,80 @@ class PrintTab(QWidget):
                 for cell in row:
                     if cell.value:
                         value = str(cell.value).strip()
-                        if self.validate_imei(value):
-                            self.validation_data.add(self.clean_imei(value))
-                            count += 1
+                        self.validation_data.add(value)
+                        count += 1
             
             wb.close()
             
             if count > 0:
-                self.validation_status.setText(f"已加载 {count} 条")
-                self.validation_status.setStyleSheet("color: #4CAF50; font-weight: bold;")
-                self.check_ready_status()
-                self.log_message(f"成功加载 {count} 条 IMEI 数据")
-                QMessageBox.information(
-                    self,
-                    "加载成功",
-                    f"成功加载 {count} 条 IMEI 数据\n\n"
-                    f"只有完全匹配的 IMEI 才能打印"
-                )
+                if not silent:
+                    self.validation_status.setText(f"已加载 {count} 条")
+                    self.validation_status.setStyleSheet("color: #4CAF50; font-weight: bold;")
+                    self.check_ready_status()
+                    self.log_message(f"成功加载 {count} 条数据")
+                    QMessageBox.information(
+                        self,
+                        "加载成功",
+                        f"成功加载 {count} 条数据\n\n"
+                        f"只有完全匹配的数据才能打印"
+                    )
+                return True
             else:
-                self.validation_status.setText("无有效数据")
+                self.validation_status.setText("无数据")
                 self.validation_status.setStyleSheet("color: #f44336; font-weight: bold;")
-                self.update_status("未找到有效的 15 位 IMEI 数据", False)
-                self.log_message("未找到有效的 IMEI 数据")
-                QMessageBox.warning(
-                    self,
-                    "警告",
-                    "Excel 文件中未找到有效的 15 位 IMEI 数据\n\n"
-                    "请确保文件中包含 15 位数字的 IMEI 号码"
-                )
+                if not silent:
+                    self.update_status("Excel 文件中没有数据", False)
+                    self.log_message("Excel 文件中没有数据")
+                    QMessageBox.warning(
+                        self,
+                        "警告",
+                        "Excel 文件中没有数据\n\n"
+                        "请确保文件中包含有效数据"
+                    )
+                return False
                 
+        except PermissionError:
+            self.validation_status.setText("权限错误")
+            self.validation_status.setStyleSheet("color: #f44336; font-weight: bold;")
+            error_msg = (
+                f"无法访问 Excel 文件！\n\n"
+                f"文件路径：{self.validation_excel_path}\n\n"
+                f"可能原因：\n"
+                f"1. 文件正在被 Excel 或其他程序占用\n"
+                f"2. 没有读取该文件的权限\n"
+                f"3. 文件被杀毒软件阻止\n\n"
+                f"请尝试：\n"
+                f"- 关闭 Excel 中打开的该文件\n"
+                f"- 以管理员身份运行本程序\n"
+                f"- 检查文件权限"
+            )
+            if not silent:
+                self.update_status("权限错误 - 文件可能被占用", False)
+                self.log_message(f"Excel 文件权限错误：{self.validation_excel_path}")
+                QMessageBox.critical(self, "权限错误", error_msg)
+            return False
+            
         except Exception as e:
             self.validation_status.setText("加载失败")
             self.validation_status.setStyleSheet("color: #f44336; font-weight: bold;")
-            self.update_status(f"加载失败：{str(e)}", False)
-            self.log_message(f"加载 Excel 失败：{str(e)}")
-            QMessageBox.critical(self, "加载失败", f"无法加载 Excel 文件:\n{str(e)}")
+            error_msg = (
+                f"无法加载 Excel 文件！\n\n"
+                f"文件路径：{self.validation_excel_path}\n\n"
+                f"错误详情：{str(e)}\n\n"
+                f"可能原因：\n"
+                f"1. 文件格式不支持（需要 .xlsx 或.xls）\n"
+                f"2. 文件已损坏\n"
+                f"3. 文件是加密的或有密码保护\n\n"
+                f"请检查：\n"
+                f"- 文件格式是否正确\n"
+                f"- 尝试用 Excel 打开此文件\n"
+                f"- 确保文件没有密码保护"
+            )
+            if not silent:
+                self.update_status(f"加载失败：{str(e)}", False)
+                self.log_message(f"加载 Excel 失败：{str(e)}")
+                QMessageBox.critical(self, "加载失败", error_msg)
+            return False
     
     def on_preview_excel_clicked(self):
         """预览 Excel 数据"""
@@ -362,10 +533,10 @@ class PrintTab(QWidget):
         if dialog.exec_() != QDialog.Accepted:
             return
         
-        imei = self.clean_imei(dialog.get_imei())
+        imei = dialog.get_imei().strip()
         
-        if not self.validate_imei(imei):
-            QMessageBox.warning(self, "验证失败", "请输入有效的 15 位 IMEI 号码")
+        if not imei:
+            QMessageBox.warning(self, "验证失败", "请输入 IMEI 号码")
             return
         
         # 校验是否在 Excel 中
@@ -374,7 +545,7 @@ class PrintTab(QWidget):
                 self,
                 "校验失败",
                 f"IMEI {imei} 不在校验数据中！\n\n"
-                f"请确保输入的 IMEI 与 Excel 文件中的数据完全匹配"
+                f"请确保输入的数据与 Excel 文件中的数据完全匹配"
             )
             self.log_message(f"校验失败：IMEI {imei} 不在允许列表中")
             self.update_status("校验失败 - IMEI 不在允许列表中", False)
@@ -401,13 +572,18 @@ class PrintTab(QWidget):
         exists, record = self.record_manager.check_imei_exists(imei)
         
         if exists:
-            dialog_dup = DuplicatePrintDialog(imei, record, self)
-            result = dialog_dup.exec_()
-            
-            if result == QDialog.Rejected:
-                self.update_status("已取消打印", False)
-                self.log_message(f"用户取消打印已存在的 IMEI: {imei}")
+            if self.auto_skip_duplicate:
+                self.log_message(f"自动跳过重复打印：IMEI {imei}")
+                self.update_status("已跳过重复 IMEI", False)
                 return
+            else:
+                dialog_dup = DuplicatePrintDialog(imei, record, self)
+                result = dialog_dup.exec_()
+                
+                if result == QDialog.Rejected:
+                    self.update_status("已取消打印", False)
+                    self.log_message(f"用户取消打印已存在的 IMEI: {imei}")
+                    return
         
         # 执行打印
         self.update_status("正在打印...", True)
@@ -464,9 +640,8 @@ class IMEIInputDialog(QDialog):
         imei_form.setSpacing(10)
         
         self.imei_input = QLineEdit()
-        self.imei_input.setPlaceholderText("请输入或扫描 15 位 IMEI")
+        self.imei_input.setPlaceholderText("请输入或扫描 IMEI")
         self.imei_input.setFont(QFont("Consolas", 18))
-        self.imei_input.setMaxLength(15)
         self.imei_input.returnPressed.connect(self.on_print)  # 回车直接打印
         
         self.copies_spin = QSpinBox()
@@ -504,10 +679,10 @@ class IMEIInputDialog(QDialog):
     def on_print(self):
         """回车键触发打印"""
         imei = self.imei_input.text().strip()
-        if imei and len(imei) == 15:
+        if imei:
             self.accept()
         else:
-            QMessageBox.warning(self, "格式错误", "请输入完整的 15 位 IMEI")
+            QMessageBox.warning(self, "输入错误", "请输入 IMEI")
     
     def get_imei(self) -> str:
         """获取 IMEI"""
@@ -584,14 +759,14 @@ class ExcelPreviewDialog(QDialog):
         layout = QVBoxLayout()
         
         # 统计信息
-        info_label = QLabel(f"共 {len(self.data)} 条 IMEI 数据")
+        info_label = QLabel(f"共 {len(self.data)} 条数据")
         info_label.setFont(QFont("Microsoft YaHei", 12, QFont.Bold))
         info_label.setStyleSheet("color: #2196F3;")
         
         # 数据表格
         self.table = QTableWidget()
         self.table.setColumnCount(1)
-        self.table.setHorizontalHeaderLabels(["IMEI 号码"])
+        self.table.setHorizontalHeaderLabels(["数据内容"])
         
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.Stretch)
@@ -602,8 +777,8 @@ class ExcelPreviewDialog(QDialog):
         display_data = sorted(list(self.data))[:100]
         self.table.setRowCount(len(display_data))
         
-        for i, imei in enumerate(display_data):
-            self.table.setItem(i, 0, QTableWidgetItem(imei))
+        for i, item in enumerate(display_data):
+            self.table.setItem(i, 0, QTableWidgetItem(item))
         
         # 提示
         if len(self.data) > 100:

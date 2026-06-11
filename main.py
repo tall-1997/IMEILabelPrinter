@@ -58,8 +58,9 @@ def main():
     # 创建主窗口
     window = MainWindow()
     
-    # 添加打印标签页
-    print_tab = PrintTab(record_manager, template_path)
+    # 添加打印标签页（自动从配置加载上次的模板和 Excel 路径）
+    default_excel_file = ""
+    print_tab = PrintTab(record_manager, template_path, default_excel_file)
     window.add_page(print_tab, "打印录入", "print")
     
     # 添加历史查询标签页
