@@ -1,5 +1,6 @@
 """
 打印录入页面 UI 组件
+支持自由选择 BarTender 模板和 Excel 校验文件
 """
 
 import os
@@ -9,9 +10,9 @@ from PyQt5.QtWidgets import (
     QLabel, QLineEdit, QSpinBox, QPushButton, QComboBox,
     QMessageBox, QGroupBox, QTextEdit, QFileDialog,
     QDialog, QDialogButtonBox, QTableWidget, QTableWidgetItem,
-    QHeaderView, QDateEdit
+    QHeaderView, QFrame
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QDate
+from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont
 
 
@@ -20,18 +21,18 @@ class PrintTab(QWidget):
     
     print_success = pyqtSignal(str)
     
-    def __init__(self, record_manager, template_path: str):
+    def __init__(self, record_manager, default_template_path: str):
         super().__init__()
         
         self.record_manager = record_manager
-        self.template_path = template_path
+        self.template_path = default_template_path
         self.bartender = None
         self.data_sources = []
         self.validation_excel_path = ""
         self.validation_data = set()
         
         self.init_ui()
-        self.load_data_sources()
+        self.load_template()
     
     def init_ui(self):
         """初始化 UI"""
@@ -49,14 +50,43 @@ class PrintTab(QWidget):
         
         main_layout.setAlignment(Qt.AlignTop)
         
-        # Excel 文件选择区域
+        # =====================================================
+        # 1. 模板文件选择区域
+        # =====================================================
+        template_group = QGroupBox("BarTender 模板配置")
+        template_layout = QHBoxLayout()
+        template_layout.setSpacing(10)
+        
+        self.template_path_label = QLabel("未选择模板")
+        self.template_path_label.setStyleSheet("color: #999;")
+        self.template_path_label.setFixedWidth(300)
+        
+        self.select_template_btn = QPushButton("选择模板")
+        self.select_template_btn.clicked.connect(self.on_select_template_clicked)
+        
+        self.template_status = QLabel("未加载")
+        self.template_status.setStyleSheet("color: #f44336; font-weight: bold;")
+        
+        template_layout.addWidget(QLabel("模板:"))
+        template_layout.addWidget(self.template_path_label)
+        template_layout.addWidget(self.select_template_btn)
+        template_layout.addWidget(QLabel("状态:"))
+        template_layout.addWidget(self.template_status)
+        
+        template_group.setLayout(template_layout)
+        
+        # =====================================================
+        # 2. Excel 文件选择区域
+        # =====================================================
         excel_group = QGroupBox("校验数据源配置")
         excel_layout = QHBoxLayout()
+        excel_layout.setSpacing(10)
         
         self.excel_path_label = QLabel("未选择文件")
         self.excel_path_label.setStyleSheet("color: #999;")
+        self.excel_path_label.setFixedWidth(300)
         
-        self.select_excel_btn = QPushButton("选择 Excel 文件")
+        self.select_excel_btn = QPushButton("选择 Excel")
         self.select_excel_btn.clicked.connect(self.on_select_excel_clicked)
         
         self.load_excel_btn = QPushButton("加载数据")
@@ -66,8 +96,8 @@ class PrintTab(QWidget):
         self.validation_status = QLabel("未校验")
         self.validation_status.setStyleSheet("color: #f44336; font-weight: bold;")
         
-        excel_layout.addWidget(QLabel("文件:"))
-        excel_layout.addWidget(self.excel_path_label, 1)
+        excel_layout.addWidget(QLabel("Excel:"))
+        excel_layout.addWidget(self.excel_path_label)
         excel_layout.addWidget(self.select_excel_btn)
         excel_layout.addWidget(self.load_excel_btn)
         excel_layout.addWidget(QLabel("状态:"))
@@ -75,7 +105,18 @@ class PrintTab(QWidget):
         
         excel_group.setLayout(excel_layout)
         
-        # 打印按钮区域（放在中间方便快速操作）
+        # =====================================================
+        # 3. 分隔线
+        # =====================================================
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setFrameShadow(QFrame.Sunken)
+        line.setStyleSheet("background: #d0d0d0;")
+        line.setFixedHeight(2)
+        
+        # =====================================================
+        # 4. 操作按钮区域
+        # =====================================================
         button_layout = QHBoxLayout()
         button_layout.setSpacing(20)
         
@@ -93,11 +134,13 @@ class PrintTab(QWidget):
         button_layout.addWidget(self.print_btn)
         button_layout.addWidget(self.preview_btn)
         
-        # 状态显示区域
+        # =====================================================
+        # 5. 状态显示区域
+        # =====================================================
         status_group = QGroupBox("打印状态")
         status_layout = QVBoxLayout()
         
-        self.status_label = QLabel("就绪 - 请先选择并加载校验 Excel 文件")
+        self.status_label = QLabel("就绪 - 请先选择模板和 Excel 文件")
         self.status_label.setFont(QFont("Microsoft YaHei", 12))
         self.status_label.setStyleSheet("color: #FF9800; font-weight: bold;")
         
@@ -110,14 +153,26 @@ class PrintTab(QWidget):
         status_layout.addWidget(self.log_text)
         status_group.setLayout(status_layout)
         
+        # 添加到主布局
+        main_layout.addWidget(template_group)
         main_layout.addWidget(excel_group)
+        main_layout.addWidget(line)
         main_layout.addLayout(button_layout)
         main_layout.addWidget(status_group)
     
-    def load_data_sources(self):
-        """加载模板数据源"""
+    def load_template(self):
+        """加载模板文件"""
+        if not self.template_path or not os.path.exists(self.template_path):
+            self.template_status.setText("未选择")
+            self.template_status.setStyleSheet("color: #f44336; font-weight: bold;")
+            self.log_message("模板未加载")
+            return
+        
         try:
             from core.bartender import BarTenderPrinter
+            
+            self.template_status.setText("加载中...")
+            self.template_status.setStyleSheet("color: #2196F3; font-weight: bold;")
             
             self.bartender = BarTenderPrinter(self.template_path)
             success, result = self.bartender.load_template()
@@ -126,20 +181,57 @@ class PrintTab(QWidget):
                 success, data_sources = self.bartender.get_data_sources()
                 if success and data_sources:
                     self.data_sources = data_sources
-                    self.log_message(f"已加载 {len(data_sources)} 个数据源")
+                    self.template_status.setText(f"已加载 {len(data_sources)} 个数据源")
+                    self.template_status.setStyleSheet("color: #4CAF50; font-weight: bold;")
+                    self.log_message(f"模板加载成功：{os.path.basename(self.template_path)}")
+                    self.check_ready_status()
                 else:
+                    self.template_status.setText("未找到数据源")
+                    self.template_status.setStyleSheet("color: #FF9800; font-weight: bold;")
                     self.log_message("未找到数据源，使用默认配置")
+                    self.check_ready_status()
             else:
+                self.template_status.setText("加载失败")
+                self.template_status.setStyleSheet("color: #f44336; font-weight: bold;")
                 self.log_message(f"模板加载失败：{result}")
+                QMessageBox.warning(self, "模板加载失败", f"无法加载 BarTender 模板:\n{result}")
+                
         except Exception as e:
+            self.template_status.setText("加载失败")
+            self.template_status.setStyleSheet("color: #f44336; font-weight: bold;")
             self.log_message(f"初始化失败：{str(e)}")
+            QMessageBox.critical(self, "错误", f"加载模板时发生错误:\n{str(e)}")
+    
+    def check_ready_status(self):
+        """检查是否可以打印"""
+        can_print = (
+            self.template_path and 
+            os.path.exists(self.template_path) and
+            self.validation_data and
+            len(self.validation_data) > 0
+        )
+        
+        if can_print:
+            self.print_btn.setEnabled(True)
+            self.preview_btn.setEnabled(True)
+            self.status_label.setText("就绪 - 可以点击打印")
+            self.status_label.setStyleSheet("color: #4CAF50; font-weight: bold;")
+        else:
+            self.print_btn.setEnabled(False)
+            self.preview_btn.setEnabled(False)
     
     def validate_imei(self, imei: str) -> bool:
         """验证 IMEI 格式"""
         if not imei:
             return False
+        # 支持 15 位数字，可选带空格或横杠
+        clean_imei = imei.strip().replace("-", "").replace(" ", "")
         pattern = r'^\d{15}$'
-        return bool(re.match(pattern, imei.strip()))
+        return bool(re.match(pattern, clean_imei))
+    
+    def clean_imei(self, imei: str) -> str:
+        """清理 IMEI 格式"""
+        return imei.strip().replace("-", "").replace(" ", "")
     
     def log_message(self, message: str):
         """记录日志"""
@@ -154,6 +246,25 @@ class PrintTab(QWidget):
             self.status_label.setStyleSheet("color: #4CAF50; font-weight: bold;")
         else:
             self.status_label.setStyleSheet("color: #f44336; font-weight: bold;")
+    
+    def on_select_template_clicked(self):
+        """选择 BarTender 模板文件"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择 BarTender 模板文件",
+            "",
+            "BarTender 模板 (*.btw)"
+        )
+        
+        if file_path:
+            self.template_path = file_path
+            self.template_path_label.setText(os.path.basename(file_path))
+            self.template_path_label.setStyleSheet("color: #2196F3; font-weight: bold;")
+            self.template_status.setText("待加载")
+            self.template_status.setStyleSheet("color: #2196F3; font-weight: bold;")
+            self.data_sources = []
+            self.log_message(f"已选择模板：{file_path}")
+            self.load_template()
     
     def on_select_excel_clicked(self):
         """选择 Excel 文件"""
@@ -172,7 +283,9 @@ class PrintTab(QWidget):
             self.validation_data.clear()
             self.validation_status.setText("待加载")
             self.validation_status.setStyleSheet("color: #FF9800; font-weight: bold;")
-            self.update_status("已选择文件，请点击加载数据", True)
+            self.print_btn.setEnabled(False)
+            self.preview_btn.setEnabled(False)
+            self.update_status("已选择 Excel 文件，请点击加载数据", True)
             self.log_message(f"已选择校验文件：{file_path}")
     
     def on_load_excel_clicked(self):
@@ -184,6 +297,7 @@ class PrintTab(QWidget):
         try:
             self.validation_status.setText("加载中...")
             self.validation_status.setStyleSheet("color: #2196F3; font-weight: bold;")
+            self.update_status("正在加载 Excel 数据...", True)
             
             from openpyxl import load_workbook
             wb = load_workbook(self.validation_excel_path, read_only=True)
@@ -197,7 +311,7 @@ class PrintTab(QWidget):
                     if cell.value:
                         value = str(cell.value).strip()
                         if self.validate_imei(value):
-                            self.validation_data.add(value)
+                            self.validation_data.add(self.clean_imei(value))
                             count += 1
             
             wb.close()
@@ -205,9 +319,7 @@ class PrintTab(QWidget):
             if count > 0:
                 self.validation_status.setText(f"已加载 {count} 条")
                 self.validation_status.setStyleSheet("color: #4CAF50; font-weight: bold;")
-                self.print_btn.setEnabled(True)
-                self.preview_btn.setEnabled(True)
-                self.update_status("就绪 - 可以点击打印", True)
+                self.check_ready_status()
                 self.log_message(f"成功加载 {count} 条 IMEI 数据")
                 QMessageBox.information(
                     self,
@@ -245,12 +357,12 @@ class PrintTab(QWidget):
     
     def on_print_clicked(self):
         """打印按钮点击事件"""
-        # 弹出输入对话框
+        # 弹出输入对话框（支持回车打印）
         dialog = IMEIInputDialog(self)
         if dialog.exec_() != QDialog.Accepted:
             return
         
-        imei = dialog.get_imei().strip()
+        imei = self.clean_imei(dialog.get_imei())
         
         if not self.validate_imei(imei):
             QMessageBox.warning(self, "验证失败", "请输入有效的 15 位 IMEI 号码")
@@ -269,11 +381,18 @@ class PrintTab(QWidget):
             return
         
         copies = dialog.get_copies()
-        data_source = self.datasource_combo.currentText().strip()
         
-        if not data_source:
-            QMessageBox.warning(self, "验证失败", "请输入数据源名称")
-            return
+        # 获取数据源名称 - 如果只有一个数据源，自动使用
+        if len(self.data_sources) == 1:
+            data_source = self.data_sources[0]
+        elif len(self.data_sources) == 0:
+            data_source = "IMEI1"  # 默认值
+        else:
+            # 多个数据源时需要用户选择
+            dialog_ds = DataSourceDialog(self.data_sources, self)
+            if dialog_ds.exec_() != QDialog.Accepted:
+                return
+            data_source = dialog_ds.get_data_source()
         
         import getpass
         operator = getpass.getuser()
@@ -296,7 +415,7 @@ class PrintTab(QWidget):
         
         try:
             if not self.bartender:
-                self.load_data_sources()
+                self.load_template()
             
             success, msg = self.bartender.set_data_value(data_source, imei)
             if not success:
@@ -308,7 +427,7 @@ class PrintTab(QWidget):
             
             self.record_manager.add_record(imei, copies, operator)
             
-            self.log_message(f"打印成功：IMEI={imei}, 份数={copies}")
+            self.log_message(f"打印成功：IMEI={imei}, 份数={copies}, 数据源={data_source}")
             self.update_status(f"打印成功！已打印 {copies} 份", True)
             self.print_success.emit(imei)
             
@@ -324,14 +443,14 @@ class PrintTab(QWidget):
 
 
 class IMEIInputDialog(QDialog):
-    """IMEI 输入对话框"""
+    """IMEI 输入对话框 - 支持回车快速打印"""
     
     def __init__(self, parent=None):
         super().__init__(parent)
         
         self.setWindowTitle("输入 IMEI 号码")
         self.setModal(True)
-        self.resize(400, 300)
+        self.resize(450, 280)
         self.init_ui()
     
     def init_ui(self):
@@ -342,17 +461,19 @@ class IMEIInputDialog(QDialog):
         # IMEI 输入
         imei_group = QGroupBox("IMEI 信息")
         imei_form = QFormLayout()
+        imei_form.setSpacing(10)
         
         self.imei_input = QLineEdit()
         self.imei_input.setPlaceholderText("请输入或扫描 15 位 IMEI")
-        self.imei_input.setFont(QFont("Consolas", 16))
+        self.imei_input.setFont(QFont("Consolas", 18))
         self.imei_input.setMaxLength(15)
+        self.imei_input.returnPressed.connect(self.on_print)  # 回车直接打印
         
         self.copies_spin = QSpinBox()
         self.copies_spin.setMinimum(1)
         self.copies_spin.setMaximum(999)
         self.copies_spin.setValue(1)
-        self.copies_spin.setFont(QFont("Microsoft YaHei", 12))
+        self.copies_spin.setFont(QFont("Microsoft YaHei", 14))
         
         imei_form.addRow("IMEI 号码:", self.imei_input)
         imei_form.addRow("打印份数:", self.copies_spin)
@@ -380,6 +501,14 @@ class IMEIInputDialog(QDialog):
         self.setLayout(layout)
         self.imei_input.setFocus()
     
+    def on_print(self):
+        """回车键触发打印"""
+        imei = self.imei_input.text().strip()
+        if imei and len(imei) == 15:
+            self.accept()
+        else:
+            QMessageBox.warning(self, "格式错误", "请输入完整的 15 位 IMEI")
+    
     def get_imei(self) -> str:
         """获取 IMEI"""
         return self.imei_input.text()
@@ -389,17 +518,65 @@ class IMEIInputDialog(QDialog):
         return self.copies_spin.value()
 
 
+class DataSourceDialog(QDialog):
+    """数据源选择对话框"""
+    
+    def __init__(self, data_sources: list, parent=None):
+        super().__init__(parent)
+        
+        self.data_sources = data_sources
+        self.setWindowTitle("选择数据源")
+        self.setModal(True)
+        self.resize(400, 300)
+        self.init_ui()
+    
+    def init_ui(self):
+        """初始化 UI"""
+        layout = QVBoxLayout()
+        layout.setSpacing(15)
+        
+        # 标题
+        title_label = QLabel("模板包含多个数据源，请选择要使用的数据源：")
+        title_label.setWordWrap(True)
+        layout.addWidget(title_label)
+        
+        # 数据源列表
+        self.combo = QComboBox()
+        self.combo.setFont(QFont("Microsoft YaHei", 14))
+        for ds in self.data_sources:
+            self.combo.addItem(ds)
+        
+        layout.addWidget(QLabel("数据源:"))
+        layout.addWidget(self.combo)
+        
+        # 按钮
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel
+        )
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        button_box.button(QDialogButtonBox.Ok).setText("确定")
+        button_box.button(QDialogButtonBox.Cancel).setText("取消")
+        
+        layout.addWidget(button_box)
+        self.setLayout(layout)
+    
+    def get_data_source(self) -> str:
+        """获取选中的数据源"""
+        return self.combo.currentText()
+
+
 class ExcelPreviewDialog(QDialog):
     """Excel 数据预览对话框"""
     
     def __init__(self, data: set, parent=None):
         super().__init__(parent)
         
+        self.data = data
+        
         self.setWindowTitle("Excel 数据预览")
         self.setModal(True)
         self.resize(600, 500)
-        self.data = data
-        
         self.init_ui()
     
     def init_ui(self):
