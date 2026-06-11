@@ -1,0 +1,20 @@
+{
+    "template": {
+        "path": "templates/imei_label.btw",
+        "default_data_source": "IMEI1"
+    },
+    "excel": {
+        "path": "data/records.xlsx",
+        "columns": ["IMEI", "打印时间", "份数", "操作员", "备注"]
+    },
+    "printer": {
+        "default_copies": 1,
+        "min_copies": 1,
+        "max_copies": 999
+    },
+    "ui": {
+        "title": "IMEI 标签打印系统",
+        "width": 1024,
+        "height": 768
+    }
+}

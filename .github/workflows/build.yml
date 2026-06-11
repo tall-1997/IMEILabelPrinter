@@ -1,0 +1,65 @@
+name: Build Windows EXE
+
+on:
+  push:
+    tags:
+      - 'v*'
+    branches:
+      - main
+      - master
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+      
+    - name: 设置 Python 环境
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.9'
+        cache: 'pip'
+        
+    - name: 安装依赖
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pywin32
+        
+    - name: 安装 PyInstaller
+      run: pip install pyinstaller
+      
+    - name: 执行打包
+      run: pyinstaller --clean IMEILabelPrinter.spec
+      
+    - name: 复制配置文件
+      run: |
+        copy config.json "dist\IMEI 标签打印系统\config.json"
+        mkdir "dist\IMEI 标签打印系统\data"
+        mkdir "dist\IMEI 标签打印系统\templates"
+        copy "templates\README.txt" "dist\IMEI 标签打印系统\templates\README.txt"
+        copy "README.md" "dist\IMEI 标签打印系统\README.md"
+        copy "BUILD_WINDOWS.md" "dist\IMEI 标签打印系统\BUILD_WINDOWS.md"
+        
+    - name: 创建 ZIP 压缩包
+      run: |
+        Compress-Archive -Path "dist\IMEI 标签打印系统\*" -DestinationPath "dist\IMEI 标签打印系统.zip"
+        
+    - name: 上传构建产物
+      uses: actions/upload-artifact@v4
+      with:
+        name: IMEI-Label-Printer-Windows
+        path: dist/IMEI 标签打印系统.zip
+        retention-days: 30
+        
+    - name: 创建 Release (仅 Tag 触发)
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: dist/IMEI 标签打印系统.zip
+        body_path: RELEASE_NOTES.md
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
