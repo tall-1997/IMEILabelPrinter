@@ -66,9 +66,17 @@ class BarTenderPrinter:
             return False, f"模板文件不存在:\n\n{self.template_path}\n\n请检查文件路径是否正确。"
         
         try:
-            # 使用 Documents.Open 方法打开模板
+            # BarTender 2022 使用 Documents.Open 方法
+            # 先尝试直接访问 Documents 属性
+            try:
+                documents = self.app.Documents
+            except AttributeError:
+                # 如果 Documents 不是直接属性，尝试通过其他方式访问
+                return False, "BarTender 对象模型不兼容：\n\n无法访问 Documents 集合。\n\n可能原因：\n1. BarTender 版本不兼容\n2. BarTender 未完全启动\n3. COM 接口访问权限问题\n\n建议：\n- 确保 BarTender 2021 或 2022 已安装\n- 以管理员身份运行本程序\n- 先手动打开 BarTender 软件"
+            
+            # 打开模板文件
             # 参数：FileName, ReadOnly, PasswordDocument, PasswordTemplate
-            self.document = self.app.Documents.Open(self.template_path, False, "", "")
+            self.document = documents.Open(self.template_path, False, "", "")
             
             if not self.document:
                 return False, f"无法打开模板文件:\n\n{self.template_path}\n\n文件可能已损坏或格式不正确。"
