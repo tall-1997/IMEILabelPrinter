@@ -8,6 +8,10 @@ on:
       - main
       - master
 
+permissions:
+  contents: write
+  actions: read
+
 jobs:
   build-windows:
     runs-on: windows-latest
@@ -27,26 +31,30 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         pip install pywin32
-        
+      shell: pwsh
+      
     - name: 安装 PyInstaller
       run: pip install pyinstaller
+      shell: pwsh
       
     - name: 执行打包
-      run: pyinstaller --clean IMEILabelPrinter.spec
+      run: pyinstaller --clean IMEILabelPrinter.spec --noconfirm
+      shell: pwsh
       
     - name: 复制配置文件
       run: |
-        copy config.json "dist\IMEI 标签打印系统\config.json"
-        mkdir "dist\IMEI 标签打印系统\data"
-        mkdir "dist\IMEI 标签打印系统\templates"
-        copy "templates\README.txt" "dist\IMEI 标签打印系统\templates\README.txt"
-        copy "README.md" "dist\IMEI 标签打印系统\README.md"
-        copy "BUILD_WINDOWS.md" "dist\IMEI 标签打印系统\BUILD_WINDOWS.md"
-        
+        Copy-Item "config.json" -Destination "dist\IMEI 标签打印系统\config.json" -Force
+        New-Item -ItemType Directory -Force -Path "dist\IMEI 标签打印系统\data"
+        New-Item -ItemType Directory -Force -Path "dist\IMEI 标签打印系统\templates"
+        Copy-Item "templates\README.txt" -Destination "dist\IMEI 标签打印系统\templates\README.txt" -Force
+        Copy-Item "README.md" -Destination "dist\IMEI 标签打印系统\README.md" -Force
+      shell: pwsh
+      
     - name: 创建 ZIP 压缩包
       run: |
-        Compress-Archive -Path "dist\IMEI 标签打印系统\*" -DestinationPath "dist\IMEI 标签打印系统.zip"
-        
+        Compress-Archive -Path "dist\IMEI 标签打印系统\*" -DestinationPath "dist\IMEI 标签打印系统.zip" -Force
+      shell: pwsh
+      
     - name: 上传构建产物
       uses: actions/upload-artifact@v4
       with:
@@ -56,10 +64,11 @@ jobs:
         
     - name: 创建 Release (仅 Tag 触发)
       if: startsWith(github.ref, 'refs/tags/')
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
         files: dist/IMEI 标签打印系统.zip
         body_path: RELEASE_NOTES.md
         prerelease: false
+        generate_release_notes: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
