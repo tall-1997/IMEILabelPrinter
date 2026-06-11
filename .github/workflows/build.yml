@@ -38,7 +38,21 @@ jobs:
       shell: pwsh
       
     - name: 执行打包
-      run: pyinstaller --clean IMEILabelPrinter.spec --noconfirm
+      run: pyinstaller --clean IMEILabelPrinter.spec
+      shell: pwsh
+      
+    - name: 复制配置文件
+      run: |
+        Copy-Item "config.json" -Destination "dist\IMEI 标签打印系统\config.json" -Force
+        New-Item -ItemType Directory -Force -Path "dist\IMEI 标签打印系统\data"
+        New-Item -ItemType Directory -Force -Path "dist\IMEI 标签打印系统\templates"
+        Copy-Item "templates\README.txt" -Destination "dist\IMEI 标签打印系统\templates\README.txt" -Force
+        Copy-Item "README.md" -Destination "dist\IMEI 标签打印系统\README.md" -Force
+      shell: pwsh
+      
+    - name: 创建 ZIP 压缩包
+      run: |
+        Compress-Archive -Path "dist\IMEI 标签打印系统\*" -DestinationPath "IMEI 标签打印系统-v1.0.0.zip" -Force
       shell: pwsh
       
     - name: 复制配置文件
